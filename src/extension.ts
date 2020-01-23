@@ -127,6 +127,14 @@ export class Extension implements vscode.Disposable {
     }
 
     await vscode.commands.executeCommand('setContext', extensionName + '.mode', mode)
+
+  
+    if (mode === Mode.Normal && !this.configuration.get('selections.allowEmpty')) {
+      // Force selection to be non-empty when leaving insert mode. This is only
+      // necessary because we do not restore selections yet.
+      // TODO: Remove this once https://github.com/71/dance/issues/31 is fixed.
+      makeSelectionsNonEmpty(vscode.window.activeTextEditor!, /* selectAfter = */ true);
+    }
   }
 
   private clearDecorations(editor: vscode.TextEditor, decorationType: vscode.TextEditorDecorationType | undefined) {
@@ -233,6 +241,10 @@ export class Extension implements vscode.Disposable {
             this.setDecorations(e.textEditor, this.insertModeDecorationType)
           else
             this.setDecorations(e.textEditor, this.normalModeDecorationType)
+
+          if (mode === Mode.Normal && !this.configuration.get('selections.allowEmpty')) {
+            makeSelectionsNonEmpty(e.textEditor);
+          }
         }),
 
         vscode.workspace.onDidChangeConfiguration(e => {
@@ -306,4 +318,32 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   state.dispose()
+}
+
+/**
+ * Make all selections in the editor non-empty by selecting at least one character.
+ * @param selectAfter select the character after instead of before the cursor.
+ */
+function makeSelectionsNonEmpty(editor: vscode.TextEditor, selectAfter: boolean = false) {
+  let touched = false;
+  let selections = editor.selections.map(selection => {
+    if (!selection.isEmpty) { return selection; }
+    touched = true;
+    const offset = editor.document.offsetAt(selection.anchor);
+    if (offset > 0) {
+      if (selectAfter) {
+        // Select one character after. This only makes sense when leaving insert mode.
+        // TODO: Remove selectAfter param and the logic here once https://github.com/71/dance/issues/31 is fixed.
+        return new vscode.Selection(selection.anchor, editor.document.positionAt(offset + 1));
+      } else {
+        // Select one character before.
+        return new vscode.Selection(editor.document.positionAt(offset - 1), selection.active);
+      }
+    } else {
+      // Selection is at the very beginning of the doc. Let's move it to select
+      // the first character.
+      return new vscode.Selection(0, 0, 0, 1);
+    }
+  });
+  if (touched) { editor.selections = selections; }
 }
